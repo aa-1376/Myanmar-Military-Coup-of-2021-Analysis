@@ -1,2 +1,0 @@
-# Myanmar-Military-Coup-of-2021-Analysis
-This report looks at records of individuals who were detained, imprisoned, or killed during the  Myanmar Coup of 2021. We conduct a statistical analysis on the datasets to understand  detainment better across age, sex and township. We also merge data related to the  socioeconomic factors in different township in Myanmar. We then see what factors are  responsible to contributing to the detainment in Myanmar during the coup.
