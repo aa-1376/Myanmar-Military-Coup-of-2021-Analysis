@@ -1,0 +1,1053 @@
+---
+title: "FinalProject"
+author: "Abdullah Ahmad, Shantanu Samant, Jesus Herrera (GroupE2)"
+date: "12/9/2021"
+output: html_document
+---
+
+Myanmar Military Coup of 2021
+
+**Abstract**
+
+This report looks at records of individuals who were detained, imprisoned, or killed during the Myanmar Coup of 2021. We conduct a statistical analysis on the datasets to understand detainment better across age, sex and township. We also merge data related to the
+socioeconomic factors in different township in Myanmar. We then see what factors are responsible to contributing to the detainment in Myanmar during the coup.
+
+
+**Introduction** 
+
+
+1st February 2021 marks the military coup in Myanmar. The military overthrew democratic leader Aung San Suu Kyi (supported by the National League of Democracy),
+Since the coup started the there has been violent and non violent clashes between the protestors of the coup and the administrative forces. Throughout these clashes civilians and opposition forces have been detained, imprisoned, and killed. The Military initially did not respond with force early on in the protest. However, when civil disobedience and general strikes grew. The military became more aggressive as well. 
+This response rose to the level of escalating violence between the two opposing groups when two protestors were killed. Millions of people in Myanmar went out to protest on the streets. Since then the protests and number of imprisoned, detained and killed continued to rise. 
+In our research of the Coup in Myanmar we are researching how the coup impacted the number of people who were detained, imprisoned, and killed across the country. We hope to gain knowledge about few key characteristics. 
+Primarily we are concerned about the in-discriminant mistreatment of the protestors:
+1)	We believe that for this democratic cause, people from age groups and sex and townships were affected. However, we are trying to see if the military specially show violence against people who are young and male. Or did they detained, imprisoned, and killed individuals across all age groups. 
+a.	We also wish to see that if there was bias when the government forces who mistreat or imprison one group over the another 
+b.	How did the distribution of the detained, imprisoned and fallen varied across townships?
+
+2)	Given the history of Myanmar army in past we see that their reactions to protest are in discriminant. For our purpose, we try to hypothesize that Military did not discriminate in the detainment and imprisonment of the protesters across different age and gender. We also hypothesis there was no difference in mean age between those in imprisoned and fallen groups
+
+3)	We then get into a deep into our analysis to see if there were conditions based on the township socioeconomic characteristics which contributed to higher detainment during the coup. We will conduct a regression exercise.
+
+
+```{r}
+library(tidyverse)
+library(knitr)
+library(modelsummary)
+library(janitor)
+
+# Import starting data (AAPP)
+detainees = read_csv("https://www.andrew.cmu.edu/user/jweiss2/21f_r/94842/final_2021/detained.csv.gz")
+imprisoned_messy = read_csv("https://www.andrew.cmu.edu/user/jweiss2/21f_r/94842/final_2021/imprisoned.csv.gz")
+fallen = read_csv("https://www.andrew.cmu.edu/user/jweiss2/21f_r/94842/final_2021/fallen.csv")
+```
+```{r}
+#Lets format numbers in R to not be in scientific notation
+options(scipen = 4)
+```
+
+
+
+**Data Cleaning**
+
+
+The ACLED protests dataset is a derived dataset looking at protest-related events during 2021.  The MIMU data is in an excel spreadsheet macro file. Below is code to convert into a nested data frame per indicator.
+
+```{r}
+# Indicators data
+# 1. protests (ACLED)
+conflicts = read_csv("https://www.andrew.cmu.edu/user/jweiss2/21f_r/94842/final_2021/conflicts.csv.gz")
+
+# 2. sectors (MIMU)
+## readxl doesn't read from urls, so this is a workaround:
+tmp = tempfile(fileext = ".xlsm")
+httr::GET(
+  url = "https://www.andrew.cmu.edu/user/jweiss2/21f_r/94842/final_2021/MIMU_BaselineData_AllSectors_Countrywide_18Mar2021_revised.xlsm", 
+  httr::write_disk(tmp)
+)
+sector.indicators = 
+  readxl::read_xlsx(tmp, sheet=3, skip = 5) %>% as_tibble()
+
+
+### Organize all sectors data to be given by nested tibbles per indicator
+sector.nest = sector.indicators %>% 
+  select(1:3, 
+         Indicator_Name, Indicator_Type, Sector, Unit, 
+         starts_with("20"), Source_Name) %>%
+  mutate(Indicator = paste(Indicator_Name, Indicator_Type, 
+                           Sector, Unit, Source_Name, sep="|")) %>%
+  select(1:3, Indicator, starts_with("20")) %>%
+  pivot_longer(cols = starts_with("20"), 
+               names_to = "Year", 
+               values_to="Value") %>%
+  filter(!is.na(Value)) %>%
+  nest(data = -Indicator) %>%
+  separate(Indicator, sep="\\|", 
+           into = c("Indicator_Name", "Indicator_Type",
+                    "Sector","Unit","Source_Name")) 
+
+
+```
+# Cleaning the detainees dataset 
+
+```{r}
+#We see that there are many rows that do not contain the sex, but the name of the person, therefore we decide to change everything what is not encoded as F or M as NA
+#detainees %>% select(Sex) %>% group_by_all() %>% count() %>% as.data.frame()
+detainees = detainees %>% mutate(Sex = case_when(Sex == "F" ~ "F",
+                                     Sex == "M" ~ "M",
+                                     TRUE ~ NA_character_))
+
+#Clean the age column by changing all values to numeric type, any other variable that is not numeric will be converted to NA 
+detainees = detainees %>% mutate(Age = as.numeric(Age))
+#detainees %>% select(Age) %>% group_by_all() %>% count() %>% as.data.frame()
+
+#We find two outliers (age = 2000, 300000000), we decide to eliminate these rows. 
+detainees <-subset(detainees, Age!=2000 & Age!=3000000000)
+#detainees %>% select(Age) %>% group_by_all() %>% count() %>% as.data.frame()
+
+```
+```{r}
+#Clean the Date of Arrest column 
+detainees = detainees %>% mutate(`Date of Arrest` = case_when(
+    str_detect(`Date of Arrest`, "Jan") ~ "January",
+    str_detect(`Date of Arrest`, "Feb") ~  "February",
+    str_detect(`Date of Arrest`, "Mar") ~ "March",
+    str_detect(`Date of Arrest`, "Apr") ~ "April",
+    str_detect(`Date of Arrest`, "May") ~ "May",
+    str_detect(`Date of Arrest`, "Jun") ~ "June",
+    str_detect(`Date of Arrest`, "Jul") ~ "July",
+    str_detect(`Date of Arrest`, "Aug") ~ "August",
+    str_detect(`Date of Arrest`, "Sep") ~ "September",
+    str_detect(`Date of Arrest`, "Oct") ~ "October",
+    str_detect(`Date of Arrest`, "Nov") ~ "November",
+    str_detect(`Date of Arrest`, "Dec") ~ "December",
+    T ~ NA_character_))
+```
+
+
+```{r}
+detainees = detainees %>% mutate(`Region/State` = case_when(
+    str_detect(`Region/State`, "Kachin") ~ "Kachin",
+    str_detect(`Region/State`, "Kayah") ~  "Kayah",
+    str_detect(`Region/State`, "Kayin") ~ "Kayin",
+    str_detect(`Region/State`, "Chin") ~ "Chin",
+    str_detect(`Region/State`, "Sagaing") ~ "Sagaing",
+    str_detect(`Region/State`, "Tanintharyi") ~ "Tanintharyi",
+    str_detect(`Region/State`, "Bago") ~ "Bago",
+    str_detect(`Region/State`, "Magw") ~ "Magway",
+    str_detect(`Region/State`, "Mandalay") ~ "Mandalay",
+    str_detect(`Region/State`, "Mon") ~ "Mon",
+    str_detect(`Region/State`, "Rakhine") ~ "Rakhine",
+    str_detect(`Region/State`, "Yangon") ~ "Yangon",
+    str_detect(`Region/State`, "Shan") ~ "Shan",
+    str_detect(`Region/State`, "Ayeyarwad") ~ "Ayeyarwady",
+    str_detect(`Region/State`, "Naypyi.aw") ~ "Naypyitaw",
+    T ~ NA_character_))
+```
+
+```{r}
+#Clean the column names 
+detainees = detainees %>%
+  clean_names()
+```  
+
+```{r}
+imprisoned_messy = imprisoned_messy %>%
+  clean_names()
+```  
+
+```{r}
+#renaming sex_age column to sex
+colnames(imprisoned_messy)[which(names(imprisoned_messy) == "sex_age")] <- "sex"
+``` 
+
+```{r}
+#Making all entries of sex which are not M of F into Unknown
+imprisoned_messy = imprisoned_messy %>% mutate(sex = case_when(sex == "F" ~ "F",
+                                     sex == "M" ~ "M",
+                                     T ~ NA_character_))
+#Removing non-numeric values from the column
+imprisoned_messy <- imprisoned_messy %>% mutate(age = as.numeric(age))
+``` 
+
+```{r}
+#Fixing specific dates of arrest
+imprisoned_messy[imprisoned_messy == ")14-Sep-21"] <- "14-Sep-21"
+imprisoned_messy[imprisoned_messy == "1-Feb-21 and\r10-Feb-21"] <- "1-Feb-21"
+imprisoned_messy[imprisoned_messy == "1-Feb-21 and\r8-Feb-21"] <- "1-Feb-21"
+imprisoned_messy[imprisoned_messy == "1e4r-sSiteyp)-21"] <- "Unknown"
+imprisoned_messy[imprisoned_messy == "April"] <- "Apr-21"
+imprisoned_messy[imprisoned_messy == "March"] <- "Mar-21"
+imprisoned_messy[imprisoned_messy == "May"] <- "May-21"
+imprisoned_messy[imprisoned_messy == "September"] <- "Sep-21"
+``` 
+
+```{r}
+#Fixing name of the column
+colnames(imprisoned_messy)[which(names(imprisoned_messy) == "region_sta_te")] <- "region_state"
+``` 
+```{r}
+fallen= fallen %>% mutate(Sex = case_when(
+    str_detect(Sex, "M") ~ "M",
+    str_detect(Sex, "F") ~ "F",
+    T ~ NA_character_)
+  )
+#fallen %>% select(Sex) %>% 
+#     group_by_all() %>% count() %>% as.data.frame()
+
+```
+
+```{r}
+fallen= fallen %>% mutate(Age=as.numeric(Age))
+  
+
+#fallen %>% select(Age) %>% 
+#     group_by_all() %>% count() %>% as.data.frame()
+
+```
+
+```{r}
+
+fallen[fallen == "On August 26 at around 3 am,\rterrorist junta troops raided and set\rup camp at Ka Paung Kya Village in\rSagaing Regionâ€™s Taze Township\rand searched for and shot local\rvillagers who were hiding in the\rforest. On August 27, two siblings, a\rbrother and sister, who were eating\rin a hut west of the village while\rhiding, were shot at when they ran\raway in fear after seeing the junta\rsoldiers. The brother, Moe Swe Oo,\rwas shot dead in the stomach, and\rhis sister was shot in the arm and\rseverely injured."] <- "Unknown"
+fallen[fallen == "In The camp of\rJungle"] <- "Unknown"
+
+```
+
+```{r}
+
+fallen= fallen %>% mutate(`Deceased Date` = case_when(
+    str_detect(`Deceased Date`, "Jan") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "Feb") ~
+      `Deceased Date`,
+    str_detect(`Deceased Date`, "Mar") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "Apr") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "May") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "Jun") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "Jul") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "Aug") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "Sep") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "Oct") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "Nov") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "Dec") ~ `Deceased Date`,
+    str_detect(`Deceased Date`, "the") ~ "Unknown",
+    T ~ "Unknown"))
+
+```
+
+```{r}
+
+#fallen %>% select(`Deceased Date`) %>% 
+#     group_by_all() %>% count() %>% as.data.frame()
+
+```
+
+```{r}
+
+fallen= fallen %>% mutate(`Date of Incident` = case_when(
+    str_detect(`Date of Incident`, "Jan") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "Feb") ~
+      `Date of Incident`,
+    str_detect(`Date of Incident`, "Mar") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "Apr") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "May") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "Jun") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "Jul") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "Aug") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "Sep") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "Oct") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "Nov") ~ `Date of Incident`,
+    str_detect(`Date of Incident`, "Dec") ~ `Date of Incident`,
+    
+    T ~ "Unknown"))
+
+#fallen %>% select(`Date of Incident`) %>% 
+#     group_by_all() %>% count() %>% as.data.frame()
+
+```
+
+
+
+
+
+```{r}
+
+fallen_new = fallen %>%
+  clean_names()
+
+```
+
+
+```{r}
+#renaming sex_age column to sex
+colnames(fallen_new)[which(names(fallen_new) == "home_address")] <- "address"
+colnames(fallen_new)[which(names(fallen_new) == "organization")] <- "status"
+colnames(fallen_new)[which(names(fallen_new) == "states_regions")] <- "region_state"
+```
+
+
+```{r}
+#Rename cleaned dataframes 
+fallen = fallen_new
+imprisoned = imprisoned_messy
+
+``` 
+
+```{r}
+#Lets clean the region_state column of imprisoned df
+imprisoned = imprisoned %>% mutate(`region_state` = case_when(
+    str_detect(`region_state`, "Kachin") ~ "Kachin",
+    str_detect(`region_state`, "Kayah") ~  "Kayah",
+    str_detect(`region_state`, "Kayin") ~ "Kayin",
+    str_detect(`region_state`, "Chin") ~ "Chin",
+    str_detect(`region_state`, "Sagaing") ~ "Sagaing",
+    str_detect(`region_state`, "Tanintharyi") ~ "Tanintharyi",
+    str_detect(`region_state`, "Bago") ~ "Bago",
+    str_detect(`region_state`, "Magw") ~ "Magway",
+    str_detect(`region_state`, "Mandalay") ~ "Mandalay",
+    str_detect(`region_state`, "Mon") ~ "Mon",
+    str_detect(`region_state`, "Rakhine") ~ "Rakhine",
+    str_detect(`region_state`, "Yangon") ~ "Yangon",
+    str_detect(`region_state`, "Shan") ~ "Shan",
+    str_detect(`region_state`, "Ayeyarwad") ~ "Ayeyarwady",
+    str_detect(`region_state`, "Naypyi.aw") ~ "Naypyitaw",
+    T ~ NA_character_))
+```
+
+
+```{r}
+#Lets clean the region_state column of fallen df
+fallen = fallen %>% mutate(`region_state` = case_when(
+    str_detect(`region_state`, "Kachin") ~ "Kachin",
+    str_detect(`region_state`, "Kayah") ~  "Kayah",
+    str_detect(`region_state`, "Kayin") ~ "Kayin",
+    str_detect(`region_state`, "Chin") ~ "Chin",
+    str_detect(`region_state`, "Sagaing") ~ "Sagaing",
+    str_detect(`region_state`, "Tanintharyi") ~ "Tanintharyi",
+    str_detect(`region_state`, "Bago") ~ "Bago",
+    str_detect(`region_state`, "Magw") ~ "Magway",
+    str_detect(`region_state`, "Mandalay") ~ "Mandalay",
+    str_detect(`region_state`, "Mon") ~ "Mon",
+    str_detect(`region_state`, "Rakhine") ~ "Rakhine",
+    str_detect(`region_state`, "Yangon") ~ "Yangon",
+    str_detect(`region_state`, "Shan") ~ "Shan",
+    str_detect(`region_state`, "Ayeyarwad") ~ "Ayeyarwady",
+    str_detect(`region_state`, "Naypyi.aw") ~ "Naypyitaw",
+    T ~ NA_character_))
+```
+
+
+```{r}
+#Retrieve specific datasets for specific indicators
+
+township.sizes = sector.nest %>%  
+   filter(Indicator_Name=="Population size", 
+          Indicator_Type=="Total",  
+          str_detect(Source_Name, "Census")) %>% 
+   unnest(everything())
+
+#Economy/Wealthrank
+township.wealthrank = sector.nest %>% filter(Indicator_Name=="Wealth Rank", Indicator_Type=="Total", str_detect(Source_Name, "Vulnerability Study")) %>% unnest(everything())
+
+#Economy/Wealth ranking index
+township.wealthrankingidx = sector.nest %>% filter(Indicator_Name=="Wealth Ranking Index", Indicator_Type=="Total", str_detect(Source_Name, "Vulnerability Study")) %>% unnest(everything())
+``` 
+
+
+#### Merging on township names
+While the MIMU and ACLED data have well aligned township names, the AAPP data townships are based on free text inputs.  Some of the files has a column for township, while others simply have an address (with a township embedded).  To be able to merge the data at the township level, we will take an approximate matching approach.  
+  
+  
+  
+```{r}
+# We can use the Levenshtein distance to find approximate matches at the township level.
+
+#' level computes the levenshtein distance between x and each y and returns
+#' the ones that are within k of the smallest value as an ordered vector. 
+#' See ?adist for details.
+#' @return data.frame of hits
+leven = function(x, y, k=0, ignore.case=T) {
+  data.frame(y=y) %>%
+    as_tibble() %>%
+    
+    # compute Levenshtein distance for string x for each y
+    mutate(distance = utils::adist(x, y, 
+                                   ignore.case=ignore.case) %>% .[1,]) %>%
+    
+    # keep y's within k of the best match
+    filter(distance <= min(distance, na.rm=T) + k) %>%
+    mutate(distance.per.char = distance/nchar(y))
+}
+
+# Use `leven` for string *vectors* `x` and `y`
+apply_leven = function(x, y, k=0, distance.threshold=0.3, ignore.case=F) {
+  data.frame(x=x) %>%
+    # get potential matches for each x as a list of tibbles
+    mutate(leven.df = map(x, ~ leven(.x, y=y,
+                                     k=k, ignore.case=ignore.case))
+    ) %>%
+    unnest(everything()) %>%
+    mutate(is.match=distance.per.char < distance.threshold) %>%
+    
+    # order by best match
+    arrange(distance.per.char) %>%
+    
+    # keep the best match per `x`
+    group_by(x) %>% 
+    slice(1) %>%  
+    ungroup() %>%
+    
+    # convert non-matches to Other
+    mutate(y = ifelse(is.match, y, "Other"))  
+}
+
+```
+
+```{r}
+detainees = detainees %>%
+  mutate(Township = str_replace_all(address,".*,","")) %>%
+  mutate(Township = str_replace_all(Township,"T?own.*",""))
+
+nested.det = detainees %>% nest(data=-Township)
+nested.det %>% nrow()
+```
+
+```{r}
+detainees %>% 
+  # part (c): nesting
+  nest(data=-Township) %>%
+  #Call the specific indicator you want from the MIMU file, in this case township.sizes
+  
+  # part (d): merging with the detainee_township, MIMU_township mapper
+  #Note, the . is calling the nest(data=-Township), i.e. previous object
+  inner_join(apply_leven(.$Township,
+                         township.sizes$Township_Name,
+                         distance.threshold=0.28), #keep distance as it is 
+             by=c("Township"="x")
+  ) %>%
+  rename(detainee_township=Township, MIMU_township=y) %>%
+  # part (e): summarise at MIMU_township level
+  group_by(MIMU_township) %>%
+  summarise(detainees = sum(map_dbl(data,nrow))) %>%
+  ungroup() %>%
+  #Until this point (e), we dont have the indicator for a township, now lets merge the indicator
+  # part (f): attach MIMU indicator and compute outcome "detainees.per.1000"
+  left_join(township.sizes, by=c("MIMU_township"="Township_Name")) %>%  #Township_Name may be called in a diff way in the MIMU set
+  # Now lets standardize the data
+  mutate(detainees.per.1000 = detainees/Value) %>%
+  arrange(desc(detainees)) %>% head(5) %>% 
+  select(MIMU_township, detainees, detainees.per.1000)
+```
+
+```{r}
+#Lets add a new column "Township" from cleaning the address column
+
+imprisoned = imprisoned %>%
+  mutate(Township = str_replace_all(address,".*,","")) %>%
+  mutate(Township = str_replace_all(Township,"T?own.*",""))
+
+#nested.imprisoned = imprisoned %>% nest(data=-Township)
+#nested.imprisoned %>% nrow()
+
+#Since the dataframe fallen has already a "township' column, lets nest
+#nested.fallen = fallen %>% nest(data=-township)
+#nested.fallen %>% nrow()
+
+```
+
+
+```{r}
+#lets pull out specific columns from the dataframes to create a comprehensive dataframe with common features for all people affected by the coup, i.e. detainees, prisoners and fallen 
+imprisoned_for_merging = imprisoned[, c("name", "sex", "age", "status", "date_of_arrest", "region_state", "Township")]
+detainees_for_merging = detainees[, c("name", "sex", "age", "status", "date_of_arrest", "region_state", "Township")]
+fallen_for_merging = fallen[, c("name", "sex", "age", "status", "deceased_date", "region_state", "township")]
+
+imprisoned_for_merging = imprisoned_for_merging %>% mutate(Event = 'Imprisoned')
+detainees_for_merging = detainees_for_merging %>% mutate(Event = 'Detainee')
+fallen_for_merging = fallen_for_merging %>% mutate(Event = 'Fallen')
+
+```
+
+
+```{r}
+#Lets change the colnames, so all columns have the same name, this way we will have union compatible datasets
+colnames(fallen_for_merging)[which(names(fallen_for_merging) == "township")] <- "Township"
+colnames(imprisoned_for_merging)[which(names(imprisoned_for_merging) == "date_of_arrest")] <- "date_of_event"
+colnames(detainees_for_merging)[which(names(detainees_for_merging) == "date_of_arrest")] <- "date_of_event"
+colnames(fallen_for_merging)[which(names(fallen_for_merging) == "deceased_date")] <- "date_of_event"
+```
+
+
+```{r}
+#Lets concatenate (i.e. merge) the three datasets (fallen, imprisoned, detainees)
+
+combined_datasets = rbind(detainees_for_merging, imprisoned_for_merging,  fallen_for_merging)
+
+```
+
+```{r}
+#Lets concatenate (i.e. merge) the three datasets (fallen, imprisoned, detainees)
+
+combined_datasets = combined_datasets %>% 
+  # part (c): nesting
+  nest(data=-Township) %>%
+  #Call the specific indicator you want from the MIMU file, in this case township.sizes
+  
+  # part (d): merging with the detainee_township, MIMU_township mapper
+  #Note, the . is calling the nest(data=-Township), i.e. previous object
+  inner_join(apply_leven(.$Township,
+                         township.sizes$Township_Name,
+                         distance.threshold=0.28), #keep distance as it is 
+             by=c("Township"="x")
+  ) %>%
+  rename(combined_datasets_township=Township, MIMU_township=y) %>%
+  # part (e): summarise at MIMU_township level
+  group_by(combined_datasets_township) %>%
+  #Until this point (e), we dont have the indicator for a township, now lets merge the indicator
+  # part (f): attach MIMU indicator and compute outcome "detainees.per.1000"
+  left_join(township.sizes, by=c("MIMU_township"="Township_Name")) %>% unnest(everything()) 
+  # Now lets standardize the data
+  #mutate(detainees.per.1000 = detainees/Value) %>%
+  #arrange(desc(detainees))
+```
+
+
+```{r}
+#Let's add to our combined_datasets df a column that contains the number of events (detainees, death people, prisoners) per capita
+combined_datasets = combined_datasets %>% group_by(MIMU_township, Event) %>% mutate(count = n()) %>% mutate('Event.per.capita' = (count/Value)*1000)
+
+```
+
+```{r}
+#Lets clean the State_Region column of the combined_datasets. We detected Bago was categorized as Bago (West) and Bago (East), therefore we decided to clean the data. 
+combined_datasets = combined_datasets %>% mutate(State_Region = case_when(
+    str_detect(State_Region, "Bago") ~ "Bago",
+    str_detect(State_Region, "Shan") ~  "Shan",
+    T ~ State_Region))
+```
+
+
+```{r}
+ # det_per_capita_townshiplevel = combined_datasets %>% group_by(MIMU_township, Event.per.capita) %>% filter(Event == 'Detainee') %>% select(MIMU_township, Event.per.capita) %>% distinct() %>% rename(Detainees_per_capita = Event.per.capita, Township = MIMU_township)
+ # det_per_capita_townshiplevel
+ # 
+ # average_det_per_capita = mean(det_per_capita_townshiplevel$Detainees_per_capita, na.rm=TRUE)
+```
+
+
+**Lets Describe the people affected by the Coup**
+
+
+Q1) Who are the detainees? Where did detainment ocurred?
+We are interested to find out how the each township has been impacted with volumes of detainment to see how severe the level of detainment is per capita for each township
+
+```{r}
+ det_per_capita_townshiplevel = combined_datasets %>% group_by(MIMU_township, Event.per.capita) %>% filter(Event == 'Detainee') %>% select(MIMU_township, Event.per.capita) %>% distinct() %>% rename(Detainees_per_capita = Event.per.capita, Township = MIMU_township)
+ det_per_capita_townshiplevel
+ 
+ average_det_per_capita = mean(det_per_capita_townshiplevel$Detainees_per_capita, na.rm=TRUE)
+```
+Answer: From our initial summarization we try to see how detainment per capital were distributed across different townships. We see that the minimum number of detainment per capita was found in Thanbyuzayat where the min detainee per capita were 2.954. The highest figure were found to be in Thingangyun where the number was 224.35
+
+**Q.2) We are now interested to summarize and display a visualization on the detainees table on township level **
+```{r}
+#Retrieve observations from detainees at township level 
+#detainees_by_township = combined_datasets %>% group_by(MIMU_township, Event.per.capita) %>% filter(Event == 'Detainee') %>% #select(MIMU_township, Event.per.capita) %>% distinct() %>% rename(Detainees_per_capita = Event.per.capita, Township = MIMU_township)
+
+detainees_by_township = combined_datasets %>% group_by(MIMU_township, Event.per.capita) %>% filter(Event == 'Detainee') %>% distinct() #%>% rename(Detainees_per_capita = Event.per.capita, Township = MIMU_township)
+
+#Retrieve observations from detainees at township level 
+detainees_by_region = combined_datasets %>% group_by(State_Region) %>% filter(Event == 'Detainee')
+```
+
+
+```{r}
+#Plot detainees per capita at townships that are above the mean value 
+detainees_by_township %>% filter (Event.per.capita > average_det_per_capita) %>% 
+  ggplot(data=., aes(y=Event.per.capita, x=MIMU_township)) +
+  geom_col() +
+  theme(axis.text.x=element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+The figure shows that Thingangyun did in fact had the highest number of detainees across all townships. We also see that the most number of detainment happened here. This suggest two things, either the violence was substantially more here compared to other townships or it could also mean that the forces here had lower tolerance for any display of protest and would detain protesters right away. 
+
+```{r}
+#Plot total number of affected people per capita at townships
+combined_datasets %>% drop_na(region_state) %>% ggplot(data=., aes(y=Event.per.capita, x=region_state, fill = Event)) +
+  geom_col() +
+  theme(axis.text.x=element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+From the plot we see that the region that has been the most affected by the coup is Sagaing, followed by Yangon. Thingangyun is located in Yangon. 
+
+It is good to know which township has the highest detainmenet but we also try to see how are genders distributed across as well
+```{r}
+#
+detainees_by_township %>% drop_na() %>% group_by(MIMU_township, sex) %>% filter (Event.per.capita > average_det_per_capita) %>%
+  ggplot(data=., aes(y=Event.per.capita, x=MIMU_township, fill = sex)) +
+  geom_col() +
+  theme(axis.text.x=element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+From our results we see that in all townships more males have been imprisoned than females. Again, Thingangyun has the highest number of both male and female events per capita
+
+
+How does the median age of those detained vary across townships and gender
+```{r}
+#Summarization of age and sex of detainees according to township
+detainees_summary_age_sex = detainees_by_township %>% group_by(MIMU_township, sex) %>% summarise(Median_age= median(`age`))
+detainees_summary_age_sex = detainees_summary_age_sex %>% arrange(desc(Median_age))
+detainees_summary_age_sex
+
+min =	min(detainees_summary_age_sex$Median_age)
+min
+
+```
+From our results we see that minimum median age is `r min(detainees_summary_age_sex$Median_age)` and it belongs to `r detainees_summary_age_sex$MIMU_township[detainees_summary_age_sex$Median_age == min(detainees_summary_age_sex$Median_age)]`. The highest median age of detainee is of `r max(detainees_summary_age_sex$Median_age)` and it belongs to `r detainees_summary_age_sex$MIMU_township[detainees_summary_age_sex$Median_age == max(detainees_summary_age_sex$Median_age)]`
+
+
+
+How does the relationship show for regions?
+```{r}
+#Summarization of age and sex of detainees according to region
+det_summary_age_sex_region = detainees_by_township %>% group_by(`State_Region`, sex) %>% summarise(Median_age = median(`age`))
+
+
+
+det_summary_age_sex_region = det_summary_age_sex_region %>% arrange(desc(Median_age))
+det_summary_age_sex_region
+```
+
+From our results we see that minimum median age is `r min(det_summary_age_sex_region$Median_age)` and it belongs to `r det_summary_age_sex_region$MIMU_township[det_summary_age_sex_region == min(det_summary_age_sex_region$Median_age)]`. The highest median age of detainee is of `r max(det_summary_age_sex_region$Median_age)` and it belongs to `r det_summary_age_sex_region$MIMU_township[det_summary_age_sex_region$Median_age == max(det_summary_age_sex_region$Median_age)]`
+
+
+
+
+We also want to see how the male and female were detained in each state as a percentage of all males and all females that were detain. First we just find the values for male and female by township
+```{r}
+#Create a table that contains number of detainees in each township, according to sex 
+detainees_township_by_sex = with(detainees_by_township, table(MIMU_township, sex))
+detainees_township_by_sex 
+```
+We see the highest numbers by Township are shown in Other category (disregarding that Thingangyun  has the highest detained). 
+
+```{r}
+#Create a table that contains number of detainees in each region, according to sex 
+region_detainee_sex = with(detainees_by_region, table(State_Region, sex))
+region_detainee_sex
+```
+According to the table, the region that had the highest number of woman affected by the coup was Kachin and Yangon. However, it is relevant to explore proportions. We will explore the gender ratio of affected people by the coup, at the regional and township level. 
+
+```{r}
+township_detainee_sex_prop = with(detainees_by_township, prop.table(table(MIMU_township, sex), margin = 2) %>% round(3)) 
+township_detainee_sex_prop
+
+```
+From the results above we see that Thingangyun has the highest number of detained by sex as a proportion of total male and females who were detained. 
+
+
+We repeat the similar exercise for state and region
+```{r}
+region_detainee_sex_prop = with(detainees_by_region, prop.table(table(State_Region, sex), margin = 2) %>% round(3)) 
+region_detainee_sex_prop
+```
+Here we see that State of Yangon has the highest proportions of arrest for both male and female as the as proportion of all males and females that were arrested. This makes sense since Thingangyun township (which has the highest detainees) is present in  Yangon
+
+**Q How detainment relates to imprisonment and death (via the imprisoned and fallen data sets)**
+
+```{r}
+events_by_region = combined_datasets %>% group_by(State_Region, Event) %>% summarize(count=n()) %>% pivot_wider(names_from=Event, values_from=count)
+events_by_region
+```
+From the results above we see that Yangon had the most number of detainees (240), imprisoners (171) and fallen (24). This is very important information, as it shows Yangon had been the center of military action against the protesters
+
+
+```{r}
+events_by_township = combined_datasets %>% group_by(MIMU_township, Event) %>% summarize(count=n()) %>% pivot_wider(names_from=Event, values_from=count)
+events_by_township
+```
+When we do the analysis for township level data we see that highest number of fallen happened in Thingangyun and had a total number of 11
+
+#When did detainment occured? 
+
+```{r}
+#Lets get a table that has the proportion of detainees at each month, since the start of the coup (February 2021)
+township_detainee_Event_prop = with(detainees_by_township, prop.table(table(date_of_event, Event), margin = 2) %>% round(3)) 
+township_detainee_Event_prop
+
+
+```
+The detainment has a maximum number of people detained in March. Since the coup began in February, the military was taking less actions against the protesters. We Know that protests increased after two protesters were killed in March. This results accurately capture that most people were arrested in March.
+
+```{r}
+# Number of men and women detained over each month
+detainees_by_region %>% drop_na() %>% group_by(date_of_event, sex) %>% 
+  summarise(count=n()) %>%
+  ggplot(data=., aes(y=count, x=date_of_event, fill = sex)) +
+  geom_col() +
+  theme(axis.text.x=element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+```
+The figure above shows the distribution of detainees by month and by gender. Most people detained in a single month happened in March with more males than females being imprisoned.
+
+
+```{r}
+# Number of men and women detained in each Region
+detainees_by_region %>% drop_na() %>% group_by(State_Region, sex) %>% 
+  summarise(count=n()) %>%
+  ggplot(data=., aes(y=count, x=State_Region, fill = sex)) +
+  geom_col() +
+  theme(axis.text.x=element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+The figure above shows the distribution of detainees by region and by gender. 
+
+
+Q) How detainment relates to imprisonment and death
+
+**Statistical Testing**
+
+**Test    
+
+H0:There is no difference between the age averages of the two groups
+ 
+versus
+
+Ha:There is a difference between the age averages of the two groups.
+
+
+
+```{r}
+st_detained_imprisoned <-subset(combined_datasets, Event!="Fallen")
+
+```
+
+We first plot the distribution of Detainees and Imprisoned across different age groups, we find that the observations are normally distributed, however they are righ skewed. 
+
+```{r}
+qplot(data = st_detained_imprisoned, x = age,
+fill = Event, geom = "density", alpha = I(0.5))
+
+
+```
+```{r}
+qplot(x = Event, y = age,
+      geom = "boxplot", data = st_detained_imprisoned,
+      xlab = "Event", 
+      ylab = "Age",
+      fill = I("lightblue"))
+
+```
+
+The distribution shows that both detainees and imprisoned are distributed similarly over age. We see that both distributions have a right skew. From the boxplot, we see that there is not a substantial difference in the mean of two categories. However we will continue to use our testing methodology to get the answer
+
+We also see that the mean age of the detained and imprisoned is about the same. Detainees is slightly more varied than Imprisoners over the age group. This shows that there are no people in certain age group who have a higher likely hood to get sentenced an imprisonment
+
+We first perform the T-test
+
+```{r}
+mpg.t.test <- t.test(age ~ Event, data = st_detained_imprisoned)
+mpg.t.test
+
+```
+
+
+
+
+
+```{r}
+with(st_detained_imprisoned, t.test(x = age[Event == "Detainee"], y = age[Event == "Imprisoned"]))
+
+```
+
+The results show that there is a slight difference in mean age of detained and imprisoned.However, the p-value associated with the test is  `r t.test(age ~ Event, data = st_detained_imprisoned)$p.value` so we cannot reject the null hypothesis (H0) of no difference between the (true) averages of the two groups since the p-value is greater than the usual significance level alpha = 0.05. Based on these data, we conclude that there is not enough evidence of a difference between the (true) averages of the two groups at the usual significance level of alpha = 0.05. 
+
+
+
+
+```{r}
+mpg.t.test$conf.int
+
+```
+
+
+We are 95% confident that the true value of μ1 − μ2 is between `r mpg.t.test$conf.int` calories.
+
+
+
+
+```{r}
+mpg.wilcox.test <- wilcox.test(age ~ Event, data = st_detained_imprisoned)
+
+```
+
+```{r}
+mpg.wilcox.test
+
+```
+
+The results show that there is a slight difference in mean age of detained and imprisoned.However, the p-value associated with the test is smaller than alpha, so we cannot reject the null hypothesis (H0) of no difference between the (true) averages of the two groups since the p-value is greater than the usual significance level alpha = 0.05. 
+
+This is simmilar result to what we found in Welch two sample t-test.
+
+Hence we can can conclude that there is no statistical difference in the median age of the two groups
+
+
+```{r}
+#Lets create a subset that contains only information from Detainees and Fallen
+st_detained_fallen <-subset(combined_datasets, Event!="Imprisoned")
+```
+
+
+```{r}
+#Lets check if the data is normally distributed
+qplot(data = st_detained_fallen, x = age,
+fill = Event, geom = "density", alpha = I(0.5))
+```
+
+As we can see in the figure, the age variable has a normal distribution for the detainee and fallen datasets. However, age appears to be skewed right. 
+
+```{r}
+#Lets perform a t-test
+age.t.test <- t.test(age ~ Event, data = st_detained_fallen)
+age.t.test
+```
+
+The results show that there is a slight difference in mean age of detained and fallen. However, the p-value associated with the test is  `r t.test(age ~ Event, data = st_detained_fallen)$p.value` so we cannot reject the null hypothesis (H0) of no difference between the (true) averages of the two groups since the p-value is greater than the usual significance level alpha = 0.05. Based on these data, we conclude that there is not enough evidence of a difference between the (true) averages of the two groups at the usual significance level of alpha = 0.05.
+
+```{r}
+#Lets check if the data is normally distributed
+with(st_detained_fallen, t.test(x = age[Event == "Detainee"], y = age[Event == "Fallen"]))
+```
+```{r}
+#Lets retrieve the confidence interval
+age.t.test$conf.int
+```
+
+
+```{r}
+#Lets perform a Wilcox test
+mpg.wilcox.test <- wilcox.test(age ~ Event, data = st_detained_fallen)
+mpg.wilcox.test
+```
+
+
+# Is there any association between the events and gender? 
+
+We will run a chi-square analysis to see if there is any association between the Events and Gender, in other words we aim to explain if there is any uneven distribution on how the type of event affects the population based on gender. 
+
+Our null hypothesis state that there is no significant difference between gender and type of event.  
+Our alternative hypothesis state that the gender is related to the type of events that affect the population.
+
+Our significance level is 95%, alpha = 0.05
+
+When performing the chisq test, we find that the p-value is less than 0.05. We reject the null hypothesis, in Myanmmar the coup events are related to gender.
+
+```{r}
+#Lets retrieve the count of men and woman affected by each event of the coup
+combined_datasets %>% group_by(Event, sex) %>% summarize(count=n()) %>% pivot_wider(names_from=Event, values_from=count) %>% drop_na()
+
+#Lets create a table that contains the count of men and woman affected by each event of the coup
+event_gender = as.table(rbind(c(264, 80, 53), c(1613, 1055, 248)))
+dimnames(event_gender) = list(sex = c("F", "M"), Event = c("Detainee","Fallen", "Imprisoned"))
+
+```
+
+```{r}
+#Lets perform the chisq test using the table that contains the counts
+chisq.test(event_gender)
+```
+
+#We will also conduct a fisher test between event and gender, considering only two events: detainee and fallen. 
+
+We will run a fisher test analysis to see if there is any association between Events and Gender, in other words we aim to explain if there is any uneven distribution on how the type of events detainment and fallen affect the population based on gender. 
+
+Our null hypothesis state that there is no significant difference between gender and these type of events.  
+Our alternative hypothesis state that the gender is related to the type of events that affect the population.
+
+Our significance level is 95%, alpha = 0.05
+
+
+```{r}
+#Lets gather only the counts for Fallen and Detainee 
+event_gender.det.fallen = event_gender[,c(2,1)]
+```
+
+```{r}
+#Lets perform the chisq test using the table that contains the counts
+ftest = fisher.test(event_gender.det.fallen)
+```
+
+When performing the fisher test, we find that the pvalue `r ftest$p.value` is less than 0.05. We reject the null hypothesis, in Myanmmar the proportions of detainee and fallen are associated to gender.
+
+
+**Q What drives detainment in Mayanmar from a geographic, social and economics perspective**
+
+#Regression. What drives detainment in Myanmar from a geographic, social, and economic perspective (MIMU and conflicts data sets).
+
+#Lets retrieve the indicators information from the sector.nest (MIMU) dataset, When choosing variables that could explain the detainment, we chose numeric variables that had observations for most of the 330 townships in Myanmmar.
+```{r}
+
+#Approximate number of Vulnerable population
+vulnerable.pop = sector.nest %>% filter(Indicator_Name=="Approximate Vulnerable Population", Indicator_Type=="Total", str_detect(Source_Name, "Vulnerability Study")) %>% unnest(everything()) %>% rename(Vulnerable_Population = Value)
+
+#Number of female headed houses
+female_headed_households.pop = sector.nest %>% filter(Indicator_Name=="Number of Female-headed households", Indicator_Type=="Total", str_detect(Source_Name, "MMR_MOIP/DOP, The 2014 Myanmar Population and Hous")) %>% unnest(everything()) %>% rename(Female_Leaded_Houses = Value)
+
+#Population 25 yr and over by highest level of educaiton completed
+pop.highest.level.education = sector.nest %>% filter(Indicator_Name=="Population 25 yr and over by highest level of educaiton completed", Indicator_Type=="Middle school - Total", str_detect(Source_Name, "MMR_MOIP/DOP, The 2014 Myanmar Population and Housing Censu")) %>% unnest(everything()) %>% rename(Population_completed_Middle_school = Value)
+
+#Number of households which have Internet at home
+internet.access = sector.nest %>% filter(Indicator_Name=="Number of households which have Internet at home", Indicator_Type=="Total", str_detect(Source_Name, "MMR_MOIP/DOP, The 2014 Myanmar Population and Housing Census")) %>% unnest(everything()) %>% rename(Households_Internet = Value)
+
+#Number of employees at the private sector
+employee = sector.nest %>% filter(Indicator_Name=="Population (10 yr and over) by usual activity status", Indicator_Type=="Employee (private) - Total", str_detect(Source_Name, "MMR_MOIP/DOP, The 2014 Myanmar Population and Housing Census")) %>% unnest(everything()) %>% rename(Employees = Value)
+
+```
+
+
+```{r}
+#Lets create a df that contains all the indicators for regression
+df = vulnerable.pop %>% inner_join(female_headed_households.pop, by = "Township_Name") %>% inner_join(pop.highest.level.education, by = "Township_Name") %>% inner_join(internet.access, by = "Township_Name") %>% inner_join(employee, by = "Township_Name")
+
+#lets create a subset that contains only the observations for Detainees
+st_detainee_for_reg = subset(combined_datasets, Event=="Detainee") %>% rename(Township_Name = MIMU_township)
+
+
+
+```
+
+
+```{r}
+#Lets join the subset and the df with the indicators
+df_reg = df %>% inner_join(st_detainee_for_reg, by = "Township_Name")
+
+#lets group by township
+df_reg_township_observations = df_reg %>% group_by(Township_Name)
+
+```
+
+
+#Exploring detainment and conflicts 
+ 
+When exploring the association between the conflicts and number of detainees, we decided to consider the number of conflicts per capita in each township. 
+
+```{r}
+#Lets merge the observations for detainment and conflicts, based on Township
+#In the conflicts df, lets change the column name admin3 to Township_Name, so we can join on this column 
+conflicts = conflicts %>% rename(Township_Name = admin3)
+#We decide to gather information about the number of fatalities and number of conflicts per township 
+conflicts = conflicts %>% nest(nested.data = -c(Township_Name)) %>% mutate(Number_of_conflicts = map_dbl(nested.data, nrow)) %>% mutate(Number_of_fatalities = map_dbl(nested.data, ~ sum(.x$fatalities)))
+
+#Lets join the conflicts df with the township.sizes df, so we can calculate the number of conflicts and fatalities per capita
+df_conflicts = conflicts %>% inner_join(township.sizes, by = "Township_Name")
+
+```
+
+
+```{r}
+#Lets calculate in a per capita basis
+df_conflicts = df_conflicts %>% mutate(fatalities.per.1000 = Number_of_fatalities/Value) %>% mutate(conflicts.per.1000 = Number_of_conflicts/Value)
+```
+
+
+```{r}
+#Lets calculate in a per capita basis
+df_conflicts = df_conflicts %>% mutate(fatalities.per.1000 = Number_of_fatalities/Value) %>% mutate(conflicts.per.1000 = Number_of_conflicts/Value)
+```
+
+```{r}
+#Lets join the conflicts df with the detainees df, that contains the detainees per capita
+df_conflicts_det = df_conflicts %>% inner_join(st_detainee_for_reg %>% nest(nested.data = -c(Township_Name, Event.per.capita)), by = "Township_Name")
+```
+
+```{r}
+#Lets join the conflicts df with the detainees df, that contains the detainees per capita and also, lets join with the indicators retrieved from sector.nest
+df_conflicts_det = df_conflicts %>% inner_join(st_detainee_for_reg %>% nest(nested.data = -c(Township_Name, Event.per.capita)), by = "Township_Name") %>% inner_join(df, by = "Township_Name")
+```
+
+
+```{r}
+#Lets join the conflicts df with the detainees df, that contains the detainees per capita and also, lets join with the indicators retrieved from sector.nest
+ df_conflicts_det = df_conflicts %>% inner_join(st_detainee_for_reg %>% nest(nested.data = -c(Township_Name, Event.per.capita)), by = "Township_Name") %>% inner_join(df, by = "Township_Name")
+```
+
+```{r}
+#Lets join the conflicts df with the detainees df, that contains the detainees per capita and also, lets join with the indicators retrieved from sector.nest
+df_conflicts_det = df_conflicts %>% inner_join(st_detainee_for_reg %>% nest(nested.data = -c(Township_Name, Event.per.capita)), by = "Township_Name") %>% inner_join(df, by = "Township_Name") %>% 
+  mutate(Vulnerable_Population.per.1000 = Vulnerable_Population/Value) %>%
+  mutate(Female_Leaded_Houses.per.1000 = Female_Leaded_Houses/Value) %>%
+  mutate(Population_completed_Middle_school.per.1000 = Population_completed_Middle_school/Value) %>%
+  mutate(Households_Internet.per.1000 = Households_Internet/Value)  %>%
+  mutate(Employees.per.1000 = Employees/Value)
+  
+```
+
+```{r}
+ggplot(data = df_conflicts_det, aes(x = conflicts.per.1000, y = Event.per.capita, color=State_Region.x, size=State_Region.x)) + geom_point() 
+```
+
+The scatter plot contains the observations of conflicts per capita and detainees per capita at township. Furthermore, the townships are differentiated according to the region they belong to. We see that there appears to be weak association between the number of detainees and the number of conflicts. However, the observations for the townships in Yangon show that there is a strong association between the number of detainees and conflicts per capita in the communities of this region. As another analysis option, we suggest exploring whether this association is stronger not according to region but to specific types of conflicts such as battles, explosions, violence against civilians, etc.  
+
+
+```{r}
+ggplot(data = df_conflicts_det, aes(x = Vulnerable_Population.per.1000, y = conflicts.per.1000, color=State_Region.x, size=State_Region.x)) + geom_point() 
+```
+Based on our finding that the variable vulnerable population seems to have an association with the number of detainees, we decided to explore the association between conflicts per capita and vulnerable population per capita. The scatter plot contains the observations of conflicts and vulnerable population per capita at township. Again, Yangon is the region that shows a strong association, however it seems that there is a negative association between the two variables. This could mean that townships in Yangon that had more vulnerable population were not deeply affected by the conflicts in 2021. 
+
+**Linear Regression**
+
+We will now be conducting linear regressions to observe how our predictor variables share a relationship with the dependent variable.
+
+For our first plot we will be trying to plot how the attributes of number of employed people by township (Employees), total number of households with internet access (Households_Internet) by township, the number of people categorised as vulnerable population per township (Vulnerable_Population) and the population per township. We will first check if these predictors are statistically relevant by checking their P values. and then check if the predictors have any collinearity between each other to ensure our results are not biased.
+
+```{r}
+#Creating a regresssion object mayan.lm which will be doing the regression between Event.percapita and the rest of the predictors mentioned in the prompt above
+
+mayan.lm <- lm(Event.per.capita ~ Vulnerable_Population.per.1000 + Female_Leaded_Houses.per.1000 + Population_completed_Middle_school.per.1000 + Households_Internet.per.1000 + Employees.per.1000 ,
+   data = df_conflicts_det)
+```
+
+```{r}
+#Let us now find out the summary from our regression.
+kable(summary(mayan.lm)$coef, digits = c(3, 3, 3, 4), format = "markdown")
+summary(mayan.lm)
+
+```
+we find out that the preidictors number of people employed per 1000   Employees.per.1000,  Households_Internet.per.1000.coef , Female_Leade d_Houses.per.1000, Population_completed_Middle_school.per.1000  are statistically insignificant because of their p values being lower than 0.05.
+Vulnerable_population.per.1000 is the only statistically significant predictor. we will be dropping the  predictors from our regression which are statistically insignificant.
+
+***Methodology for regression***
+Let us now see if there are any predictors that have high correlations between themselves. we can thus see if any single variable from a correlated pair can be dropped to see if our regression R-squared improves, or p-value of other variables improves.
+
+we will be Running  the pairs command on the following set of variables: "Vulnerable_Population" , "Female_Leaded_Houses" , "Population_completed_Middle_school" , "Households_Internet" , "Employees". 
+```{r}
+pairs(df_conflicts_det[,c("Vulnerable_Population.per.1000",  "Female_Leaded_Houses.per.1000","Population_completed_Middle_school.per.1000", "Households_Internet.per.1000","Employees.per.1000")])
+```
+we see that none of the predictors we have chosen for our regression have any correlation amogst each other.
+
+Let us now Rerun our regression but without the statistically insignificant variables.  Let us see if our regression results improve. Below is shown a scatter plot that gives a hint that there is an association between the number of vulnerable population at each township and the number of detainees in the township.
+
+```{r}
+#lets display a scatter plot
+ggplot(data = df_conflicts_det, aes(x = Vulnerable_Population.per.1000, y = Event.per.capita)) + geom_point() 
+
+```
+
+```{r}
+#Creating a regresssion object mayan.lm2 which will be doing the regression between Event.percapita and Vulnerable_Population.per.1000
+mayan.lm2 <- lm(Event.per.capita ~ Vulnerable_Population.per.1000 , 
+   data = df_conflicts_det)
+```
+
+```{r}
+summary(mayan.lm)
+r1 <- summary(mayan.lm)$r.squared
+```
+
+```{r}
+summary(mayan.lm2)
+r2 <- summary(mayan.lm2)$r.squared
+```
+By dropping the two variables we see that our R squared values has decreased from `r r1` to `r r2` 
+
+We can only conclude from this that there are most certainly other variables that we haven't included, that could better explain the regression.
+
+We havent tried other regression models. we need to check if a ridge, lasso or polynomial regression could better explain the regression.
+
